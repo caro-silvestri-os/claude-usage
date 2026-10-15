@@ -182,10 +182,12 @@ func esc(_ t: String) -> String { t.replacingOccurrences(of: "&", with: "&amp;")
 func todayHTML(_ msgs: [Msg]) -> String {
     let cal = Calendar.current, t0 = cal.startOfDay(for: Date())
     let today = msgs.filter { $0.ts >= t0 }
-    let p = periods(msgs)
     let df = DateFormatter(); df.locale = Locale(identifier: "es"); df.dateFormat = "EEEE d 'de' MMMM"
     let cost = today.reduce(0) { $0 + $1.cost }
     let out = today.reduce(0) { $0 + $1.output }
+    let input = today.reduce(0) { $0 + $1.input + $1.cacheWrite }
+    let cacheRead = today.reduce(0) { $0 + $1.cached }
+    let tokens = today.reduce(0) { $0 + $1.tokens }
     let byProject = Dictionary(grouping: today, by: { $0.project })
         .map { (name: $0.key, tokens: $0.value.reduce(0) { $0 + $1.tokens }, cost: $0.value.reduce(0) { $0 + $1.cost }) }
         .sorted { $0.cost > $1.cost }
@@ -200,7 +202,7 @@ func todayHTML(_ msgs: [Msg]) -> String {
     *{box-sizing:border-box}body{margin:0;padding:18px;background:#0d1117;color:var(--tx);font:13px -apple-system,system-ui,sans-serif}
     .mu{color:var(--mu)}h1{font-size:12px;font-weight:500;color:var(--mu);margin:0 0 2px;text-transform:capitalize}
     .big{font-size:34px;font-weight:700;color:var(--acc2);letter-spacing:-.5px}.sub{color:var(--mu);margin-top:2px}
-    .tiles{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:14px 0}
+    .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
     .tiles div{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px}.tiles b{display:block;font-size:15px;margin-top:2px}
     h2{font-size:12px;font-weight:600;margin:16px 0 4px}.r{padding:6px 0;border-bottom:1px solid var(--bd);position:relative}
     .r .n{font-weight:500}.r .v{position:absolute;right:0;top:6px}.b{height:4px;background:#0d1117;border-radius:2px;margin-top:5px}.b i{display:block;height:4px;background:var(--acc);border-radius:2px;min-width:2px}
@@ -208,8 +210,7 @@ func todayHTML(_ msgs: [Msg]) -> String {
     </style>
     <h1>\(df.string(from: Date()))</h1>
     <div class=big>\(usdText(cost))</div><div class=sub>costo estimado de hoy</div>
-    <div class=tiles><div><span class=mu>Tokens</span><b>\(fmt(p.today))</b></div><div><span class=mu>Output</span><b>\(fmt(out))</b></div><div><span class=mu>7 días</span><b>\(fmt(p.week))</b></div></div>
-    <div class=mu>Este mes: \(fmt(p.month)) · \(usdText(p.monthCost)) est.</div>
+    <div class=tiles><div><span class=mu>Tokens totales</span><b>\(fmt(tokens))</b></div><div><span class=mu>Output</span><b>\(fmt(out))</b></div><div><span class=mu>Input</span><b>\(fmt(input))</b></div><div><span class=mu>Cache read</span><b>\(fmt(cacheRead))</b></div></div>
     <h2>Hoy por proyecto</h2>\(rows)
     <a href="usage://history">Ver histórico en la web →</a>
     """
@@ -302,7 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func showOptions() {
         let menu = NSMenu()
         let p = periods(snapshot)
-        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) (~$\(Int(p.todayCost.rounded())) est.) · mes ~$\(Int(p.monthCost.rounded())) est.", action: nil, keyEquivalent: ""); head.isEnabled = false
+        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) (~$\(Int(p.todayCost.rounded())) est.)", action: nil, keyEquivalent: ""); head.isEnabled = false
         let ref = NSMenuItem(title: "Actualizar ahora", action: #selector(refresh), keyEquivalent: "r"); ref.target = self
         let browser = NSMenuItem(title: "Ver histórico en la web", action: #selector(openInBrowser), keyEquivalent: "d"); browser.target = self
         let login = NSMenuItem(title: "Abrir al iniciar sesión", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self
