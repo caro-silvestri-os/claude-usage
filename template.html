@@ -4,7 +4,7 @@
 :root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--tx:#e6edf3;--mu:#8b949e;--c0:#161b22;--c1:#023BAC;--c2:#0347CE;--c3:#1A66FC;--c4:#AFC9FE;--acc:#1A66FC;--acc2:#FF6332}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px -apple-system,system-ui,sans-serif;padding:32px;max-width:1100px;margin:auto}
 h1{font-size:22px;margin:0 0 4px}.mu{color:var(--mu)}.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-top:16px}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}.stats div{min-width:0;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:12px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}.stats div{min-width:0;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:12px}
 .stats b{display:block;font-size:20px;margin-top:4px;white-space:nowrap}.stats div:first-child b{color:var(--acc2)}
 table{width:100%;border-collapse:collapse}td,th{padding:7px 8px;text-align:right;border-bottom:1px solid var(--bd)}th{color:var(--mu);font-weight:500}td:first-child,th:first-child{text-align:left}
 tr.p{cursor:pointer}tr.p:hover,tr.sel{background:#1f2630}.bar{height:6px;background:var(--acc);border-radius:3px;min-width:2px}
@@ -14,10 +14,10 @@ svg text{fill:var(--mu);font-size:10px}#tip{position:fixed;background:#000;borde
 .scroll{max-height:340px;overflow:auto}.scroll th{position:sticky;top:0;background:var(--card)}
 tr.d{cursor:pointer}tr.d:hover{background:#1f2630}a.x{color:var(--mu);cursor:pointer;text-decoration:none;margin-left:8px}
 </style>
-<div class="row"><div><h1>Claude Code usage</h1><div class="mu" id="sub"></div><div class="mu" style="font-size:12px">Costo estimado a precio de lista de la API; puede diferir del cobro real.</div></div>
+<div class="row"><div><h1>Claude Code usage</h1><div class="mu" id="sub"></div></div>
 <span><span class="mu">Período</span> <select id="period"></select><a class="x" id="clr" style="display:none">quitar filtro de proyecto</a></span></div>
 <div class="stats" id="stats"></div>
-<div class="card"><div class="row"><b id="ht"></b><select id="metric"><option value="total">Tokens totales</option><option value="output">Output</option><option value="cost">Costo estimado (USD)</option></select></div><div><svg id="heat" style="width:100%;height:auto;display:block"></svg></div><div class="mu" style="font-size:12px;margin-top:4px">Click en un día para ver el detalle.</div></div>
+<div class="card"><div class="row"><b id="ht"></b><select id="metric"><option value="total">Tokens totales</option><option value="output">Output</option></select></div><div><svg id="heat" style="width:100%;height:auto;display:block"></svg></div><div class="mu" style="font-size:12px;margin-top:4px">Click en un día para ver el detalle.</div></div>
 <div class="card" id="daycard" style="display:none"><div class="row"><b id="dayt"></b><a class="x" id="dayx">cerrar</a></div><div class="stats" id="daystats"></div><table id="dayproj"></table></div>
 <div class="card"><b>Por día</b> <span class="mu" id="dsub"></span><div class="scroll"><table id="days"></table></div></div>
 <div class="card"><b>Por proyecto</b> <span class="mu">(click para filtrar)</span><table id="proj"></table></div>
@@ -25,17 +25,13 @@ tr.d{cursor:pointer}tr.d:hover{background:#1f2630}a.x{color:var(--mu);cursor:poi
 <div id="tip"></div>
 <script>
 const D=__DATA__;let sel=null,selDay=null;const $=i=>document.getElementById(i);
-// Precios de lista de la API (USD por 1M tokens): [input, output]. Cache write = 1.25x input, cache read = 0.1x input.
-const PRICE={"claude-sonnet-5":[2,10],"claude-sonnet-5-5":[2,10],"claude-opus-5-5":[4,20],"claude-opus-5":[5,25],"claude-haiku-5-5":[.1,.5]};
-D.forEach(x=>{const[i,o]=PRICE[x.model]||[2,10];x.cost=(x.input*i+x.cache_write*i*1.25+x.cached*i*.1+x.output*o)/1e6});
-const usd=n=>"~$"+(n>=100?Math.round(n):n.toFixed(2));
 const fmt=n=>n>=1e9?(n/1e9).toFixed(2)+"B":n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":""+n;
 const sum=(a,k)=>a.reduce((s,x)=>s+x[k],0);
 function group(a,k,cmp){const m={};a.forEach(x=>(m[x[k]]??=[]).push(x));
- return Object.entries(m).map(([n,v])=>({n,v,total:sum(v,"total"),input:sum(v,"input")+sum(v,"cache_write"),cached:sum(v,"cached"),output:sum(v,"output"),cost:sum(v,"cost")})).sort(cmp||((a,b)=>b.total-a.total))}
+ return Object.entries(m).map(([n,v])=>({n,v,total:sum(v,"total"),input:sum(v,"input")+sum(v,"cache_write"),cached:sum(v,"cached"),output:sum(v,"output")})).sort(cmp||((a,b)=>b.total-a.total))}
 const years=[...new Set(D.map(x=>x.day.slice(0,4)))].sort().reverse();
 $("period").innerHTML='<option value="all">Todo el histórico</option>'+years.map(y=>`<option>${y}</option>`).join("");
-const tiles=A=>[["Costo estimado",usd(sum(A,"cost"))],["Tokens totales",fmt(sum(A,"total"))],["Input",fmt(sum(A,"input")+sum(A,"cache_write"))],["Cache read",fmt(sum(A,"cached"))],["Output",fmt(sum(A,"output"))]].map(([a,b])=>`<div><span class=mu>${a}</span><b>${b}</b></div>`).join("");
+const tiles=A=>[["Tokens totales",fmt(sum(A,"total"))],["Input",fmt(sum(A,"input")+sum(A,"cache_write"))],["Cache read",fmt(sum(A,"cached"))],["Output",fmt(sum(A,"output"))]].map(([a,b])=>`<div><span class=mu>${a}</span><b>${b}</b></div>`).join("");
 function render(){
  const period=$("period").value,P=period=="all"?D:D.filter(x=>x.day.startsWith(period)),A=sel?P.filter(x=>x.project===sel):P;
  $("sub").textContent=(sel?`Proyecto: ${sel}`:"Todos los proyectos")+" · "+(period=="all"?(D.length?`histórico desde ${D.map(x=>x.day).sort()[0]}`:"sin datos"):period);
@@ -52,21 +48,21 @@ function render(){
   if(d.getFullYear()<yr)continue;
   if(d.getMonth()!=mo){mo=d.getMonth();g+=`<text x="${w*14+24}" y="10">${d.toLocaleString("es",{month:"short"})}</text>`}
   const fut=k>today,on=k===selDay;
-  g+=`<rect x="${w*14+24}" y="${dw*14+16}" width="11" height="11" rx="2" fill="${fut?"none":col(v)}" stroke="${on?"#fff":fut?"#30363d":"none"}" stroke-opacity="${on?1:.5}" data-day="${fut?"":k}" data-t="${k}: ${met=="cost"?usd(v)+" (est.)":fmt(v)+" tokens"}"/>`}
+  g+=`<rect x="${w*14+24}" y="${dw*14+16}" width="11" height="11" rx="2" fill="${fut?"none":col(v)}" stroke="${on?"#fff":fut?"#30363d":"none"}" stroke-opacity="${on?1:.5}" data-day="${fut?"":k}" data-t="${k}: ${fmt(v)} tokens"/>`}
  ["D","L","M","M","J","V","S"].forEach((l,i)=>i%2&&(g+=`<text x="2" y="${i*14+26}">${l}</text>`));
  $("heat").setAttribute("viewBox",`0 0 ${(w+1)*14+30} 116`);$("heat").innerHTML=g;$("ht").textContent="Actividad "+yr;
  // detalle del día
  const DD=selDay?A.filter(x=>x.day===selDay):[];$("daycard").style.display=selDay?"":"none";
  if(selDay){$("dayt").textContent="Detalle del "+selDay;$("daystats").innerHTML=DD.length?tiles(DD):"";
-  const pm=group(DD,"project");$("dayproj").innerHTML=DD.length?"<tr><th>Proyecto<th>Modelo<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.</tr>"+group(DD.map(x=>({...x,pm:x.project+"|"+x.model})),"pm").map(r=>{const[p,m]=r.n.split("|");return `<tr><td>${p}<td>${m}<td>${fmt(r.input)}<td>${fmt(r.cached)}<td>${fmt(r.output)}<td>${fmt(r.total)}<td>${usd(r.cost)}</tr>`}).join(""):"<tr><td class=mu>Sin uso ese día</tr>"}
+  const pm=group(DD,"project");$("dayproj").innerHTML=DD.length?"<tr><th>Proyecto<th>Modelo<th>Input<th>Cache read<th>Output<th>Total</tr>"+group(DD.map(x=>({...x,pm:x.project+"|"+x.model})),"pm").map(r=>{const[p,m]=r.n.split("|");return `<tr><td>${p}<td>${m}<td>${fmt(r.input)}<td>${fmt(r.cached)}<td>${fmt(r.output)}<td>${fmt(r.total)}</tr>`}).join(""):"<tr><td class=mu>Sin uso ese día</tr>"}
  // por día (más reciente primero)
- const DY=group(A,"day",(a,b)=>b.n.localeCompare(a.n)),mxd=Math.max(...DY.map(r=>r.cost),1e-9);
+ const DY=group(A,"day",(a,b)=>b.n.localeCompare(a.n)),mxd=Math.max(...DY.map(r=>r.total),1);
  $("dsub").textContent=`(${DY.length} días con uso)`;
- $("days").innerHTML="<tr><th>Día<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.<th style='width:18%'></tr>"+DY.map(r=>`<tr class="d" data-day="${r.n}"><td>${r.n}<td>${fmt(r.input)}<td>${fmt(r.cached)}<td>${fmt(r.output)}<td>${fmt(r.total)}<td>${usd(r.cost)}<td><div class=bar style="width:${r.cost/mxd*100}%"></div></tr>`).join("");
+ $("days").innerHTML="<tr><th>Día<th>Input<th>Cache read<th>Output<th>Total<th style='width:22%'></tr>"+DY.map(r=>`<tr class="d" data-day="${r.n}"><td>${r.n}<td>${fmt(r.input)}<td>${fmt(r.cached)}<td>${fmt(r.output)}<td>${fmt(r.total)}<td><div class=bar style="width:${r.total/mxd*100}%"></div></tr>`).join("");
  // por proyecto / modelo
  const PR=group(P,"project"),mx=PR[0]?.total||1;
- $("proj").innerHTML="<tr><th>Proyecto<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.<th style='width:18%'></tr>"+PR.map(p=>`<tr class="p ${p.n===sel?"sel":""}" data-p="${p.n}"><td>${p.n}<td>${fmt(p.input)}<td>${fmt(p.cached)}<td>${fmt(p.output)}<td>${fmt(p.total)}<td>${usd(p.cost)}<td><div class=bar style="width:${p.total/mx*100}%"></div></tr>`).join("");
- $("mod").innerHTML="<tr><th>Modelo<th>Total<th>Costo est.</tr>"+group(A,"model").map(p=>`<tr><td>${p.n}<td>${fmt(p.total)}<td>${usd(p.cost)}</tr>`).join("");
+ $("proj").innerHTML="<tr><th>Proyecto<th>Input<th>Cache read<th>Output<th>Total<th style='width:22%'></tr>"+PR.map(p=>`<tr class="p ${p.n===sel?"sel":""}" data-p="${p.n}"><td>${p.n}<td>${fmt(p.input)}<td>${fmt(p.cached)}<td>${fmt(p.output)}<td>${fmt(p.total)}<td><div class=bar style="width:${p.total/mx*100}%"></div></tr>`).join("");
+ $("mod").innerHTML="<tr><th>Modelo<th>Total</tr>"+group(A,"model").map(p=>`<tr><td>${p.n}<td>${fmt(p.total)}</tr>`).join("");
  document.querySelectorAll("tr.p").forEach(r=>r.onclick=()=>{sel=sel===r.dataset.p?null:r.dataset.p;render()});
  document.querySelectorAll("tr.d").forEach(r=>r.onclick=()=>{selDay=r.dataset.day;render();$("daycard").scrollIntoView({block:"nearest"})});
  document.querySelectorAll("rect[data-day]").forEach(r=>r.onclick=()=>{if(r.dataset.day){selDay=selDay===r.dataset.day?null:r.dataset.day;render()}});
