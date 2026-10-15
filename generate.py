@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Lee ~/.claude/projects y genera index.html con el uso de tokens por día/proyecto/modelo."""
-import json, glob, os, sys
+import json, glob, os, re, sys, webbrowser
 from datetime import datetime
 
 PREFIX = os.environ.get("CLAUDE_USAGE_PREFIX", "pic")  # solo carpetas que empiezan así; "" = todas
-root = os.path.expanduser("~/.claude/projects")
-home_prefix = os.path.expanduser("~").replace("/", "-")
+# Claude Code guarda cada carpeta de proyecto con la ruta codificada: todo carácter no alfanumérico pasa a "-"
+# (/Users/ana/app -> -Users-ana-app, C:\Users\ana\app -> C--Users-ana-app). Funciona igual en macOS, Linux y Windows.
+claude_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+root = os.path.join(claude_dir, "projects")
+home_prefix = re.sub(r"[^A-Za-z0-9]", "-", os.path.expanduser("~"))
 msgs = {}  # message.id -> registro (los mensajes se repiten al hacer streaming; nos quedamos con el último)
-for f in glob.glob(f"{root}/**/*.jsonl", recursive=True):
+for f in glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True):
     session = os.path.basename(f)
     try:
-        for line in open(f, errors="ignore"):
+        for line in open(f, encoding="utf-8", errors="ignore"):
             if '"usage"' not in line: continue
             try: o = json.loads(line)
             except Exception: continue
@@ -21,7 +24,7 @@ for f in glob.glob(f"{root}/**/*.jsonl", recursive=True):
             folder = os.path.relpath(f, root).split(os.sep)[0]
             project = folder.removeprefix(home_prefix).lstrip("-") or "~ (home)"
             if PREFIX and not project.startswith(PREFIX): continue
-            day =datetime.fromisoformat(o["timestamp"].replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+            day = datetime.fromisoformat(o["timestamp"].replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
             msgs[m.get("id") or o["uuid"]] = dict(session=session, day=day, project=project, model=m["model"],
                 input=u.get("input_tokens", 0), cache_write=u.get("cache_creation_input_tokens", 0),
                 cached=u.get("cache_read_input_tokens", 0), output=u.get("output_tokens", 0))
@@ -39,6 +42,11 @@ for a in agg.values():
     data.append(a)
 
 here = os.path.dirname(os.path.abspath(__file__))
-html = open(f"{here}/template.html").read().replace("__DATA__", json.dumps(data))
-open(f"{here}/index.html", "w").write(html)
-print(f"{len(msgs)} mensajes -> {here}/index.html")
+out = os.path.join(here, "index.html")
+with open(os.path.join(here, "template.html"), encoding="utf-8") as t:
+    html = t.read().replace("__DATA__", json.dumps(data))
+with open(out, "w", encoding="utf-8") as w:
+    w.write(html)
+print(f"{len(msgs)} mensajes -> {out}")
+if "--open" in sys.argv:
+    webbrowser.open("file://" + out if os.name != "nt" else out)

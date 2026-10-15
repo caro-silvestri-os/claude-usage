@@ -6,9 +6,8 @@ Todo corre en tu máquina: lee los logs que Claude Code ya guarda en `~/.claude/
 
 ## Requisitos
 
-- macOS 13 o superior (la barra de menú; el dashboard web funciona en cualquier sistema con Python)
-- Python 3 (ya viene con macOS / Xcode Command Line Tools)
-- Para compilar la app de barra de menú: Xcode Command Line Tools (`xcode-select --install`)
+- **Dashboard en el navegador:** macOS, Linux o Windows, con Python 3.9 o superior.
+- **App de barra de menú:** solo macOS 13 o superior, y las Xcode Command Line Tools para compilarla (`xcode-select --install`).
 - Haber usado Claude Code en esa computadora (si no, no hay logs que leer)
 
 ## Instalación
@@ -18,16 +17,21 @@ git clone https://github.com/caro-silvestri-os/claude-usage.git
 cd claude-usage
 ```
 
-### Opción A: dashboard en el navegador
+### Opción A: dashboard en el navegador (macOS, Linux y Windows)
 
 ```bash
-python3 generate.py     # lee tus logs y genera index.html
-open index.html
+python3 generate.py --open     # lee tus logs, genera index.html y lo abre en el navegador
 ```
 
-Para actualizar los datos, volvé a correr `python3 generate.py` y recargá la página.
+En Windows usá `python` o `py` en vez de `python3`. Sin `--open` solo genera `index.html`; abrilo con doble click.
 
-### Opción B: app de barra de menú (recomendada)
+Para actualizar los datos, volvé a correr el comando (o `python3 generate.py` y recargá la página). Si usás `CLAUDE_CONFIG_DIR` para cambiar dónde guarda Claude Code sus archivos, el script lo respeta.
+
+> Linux y Windows: el script está pensado para esos sistemas (rutas, codificación UTF-8), pero lo probé solo en macOS. Si algo falla, abrí un issue con el error.
+
+La barra de menú no existe en Linux ni Windows. Ahí la alternativa es el dashboard del navegador.
+
+### Opción B: app de barra de menú (solo macOS)
 
 ```bash
 ./menubar/build.sh      # compila ClaudeUsage.app dentro de la carpeta del repo
