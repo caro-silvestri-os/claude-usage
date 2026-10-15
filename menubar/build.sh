@@ -1,6 +1,10 @@
 #!/bin/bash
 # Compila la app de barra de menú y deja ClaudeUsage.app en la carpeta del repo.
 set -euo pipefail
+if [ "$(uname)" != "Darwin" ]; then
+  echo "La app de barra de menú es solo para macOS. En Linux/Windows usá: python3 generate.py --open" >&2
+  exit 1
+fi
 cd "$(dirname "$0")"
 APP=../ClaudeUsage.app
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Lee ~/.claude/projects y genera index.html con el uso de tokens por día/proyecto/modelo."""
-import json, glob, os, re, sys, webbrowser
+import json, glob, os, pathlib, re, sys, webbrowser
 from datetime import datetime
 
 PREFIX = os.environ.get("CLAUDE_USAGE_PREFIX", "pic")  # solo carpetas que empiezan así; "" = todas
@@ -49,4 +49,4 @@ with open(out, "w", encoding="utf-8") as w:
     w.write(html)
 print(f"{len(msgs)} mensajes -> {out}")
 if "--open" in sys.argv:
-    webbrowser.open("file://" + out if os.name != "nt" else out)
+    webbrowser.open(pathlib.Path(out).as_uri())
