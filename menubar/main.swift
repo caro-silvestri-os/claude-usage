@@ -1,9 +1,14 @@
 import Cocoa
 import ServiceManagement
+import WebKit
 
 // MARK: - Datos
 
-struct Msg { let ts: Date; let project: String; let tokens: Int }
+struct Msg {
+    let ts: Date, project: String, model: String, session: String
+    let input: Int, cached: Int, output: Int
+    var tokens: Int { input + cached + output }
+}
 
 /// Lee ~/.claude/projects, deduplica por message.id y cachea por archivo (mtime + tamaño).
 final class UsageStore {
@@ -43,6 +48,7 @@ final class UsageStore {
 
     private func parse(_ path: String, folder: String) -> [String: Msg] {
         let name = project(from: folder)
+        let session = (path as NSString).lastPathComponent
         if !prefix.isEmpty && !name.hasPrefix(prefix) { return [:] }
         guard let data = FileManager.default.contents(atPath: path) else { return [:] }
         var out: [String: Msg] = [:]
@@ -65,9 +71,10 @@ final class UsageStore {
                       let tss = o["timestamp"] as? String,
                       let ts = iso.date(from: tss) ?? isoPlain.date(from: tss) else { continue }
                 func i(_ k: String) -> Int { (u[k] as? NSNumber)?.intValue ?? 0 }
-                let tokens = i("input_tokens") + i("cache_creation_input_tokens") + i("cache_read_input_tokens") + i("output_tokens")
                 let id = (m["id"] as? String) ?? (o["uuid"] as? String) ?? UUID().uuidString
-                out[id] = Msg(ts: ts, project: name, tokens: tokens)
+                out[id] = Msg(ts: ts, project: name, model: model, session: session,
+                              input: i("input_tokens") + i("cache_creation_input_tokens"),
+                              cached: i("cache_read_input_tokens"), output: i("output_tokens"))
             }
         }
         return out
@@ -80,6 +87,24 @@ func fmt(_ n: Int) -> String {
     if d >= 1e6 { return String(format: "%.1fM", d / 1e6) }
     if d >= 1e3 { return String(format: "%.1fk", d / 1e3) }
     return "\(n)"
+}
+
+/// Mismo formato que genera generate.py: un registro por (día, proyecto, modelo).
+func dashboardJSON(_ msgs: [Msg]) -> String {
+    let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+    var agg: [String: (day: String, project: String, model: String, input: Int, cached: Int, output: Int, sessions: Set<String>)] = [:]
+    for m in msgs {
+        let day = df.string(from: m.ts), key = "\(day)|\(m.project)|\(m.model)"
+        var a = agg[key] ?? (day, m.project, m.model, 0, 0, 0, [])
+        a.input += m.input; a.cached += m.cached; a.output += m.output; a.sessions.insert(m.session)
+        agg[key] = a
+    }
+    let rows: [[String: Any]] = agg.values.map {
+        ["day": $0.day, "project": $0.project, "model": $0.model, "input": $0.input, "cached": $0.cached,
+         "output": $0.output, "total": $0.input + $0.cached + $0.output, "sessions": $0.sessions.sorted()]
+    }
+    let d = (try? JSONSerialization.data(withJSONObject: rows)) ?? Data("[]".utf8)
+    return String(decoding: d, as: UTF8.self)
 }
 
 struct Period { let today: Int, week: Int, month: Int, total: Int }
@@ -105,8 +130,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let store = UsageStore()
     let queue = DispatchQueue(label: "usage", qos: .utility)
+    let popover = NSPopover()
+    let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 860, height: 700))
     var timer: Timer?
     var snapshot: [Msg] = []
+    lazy var template: String = {
+        let candidates = [Bundle.main.path(forResource: "template", ofType: "html"), repoDir + "/template.html"].compactMap { $0 }
+        for p in candidates { if let t = try? String(contentsOfFile: p, encoding: .utf8) { return t } }
+        return "<body style='font-family:sans-serif'>No encuentro template.html</body>"
+    }()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         if let b = item.button {
@@ -116,11 +148,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             b.imagePosition = .imageLeading
             b.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
             b.title = " …"
+            b.target = self
+            b.action = #selector(clicked)
+            b.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        rebuildMenu()
+        web.setValue(false, forKey: "drawsBackground")
+        let vc = NSViewController(); vc.view = web
+        popover.contentViewController = vc
+        popover.contentSize = NSSize(width: 860, height: 700)
+        popover.behavior = .transient
+        popover.appearance = NSAppearance(named: .darkAqua)
+
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(timer!, forMode: .common)
+    }
+
+    /// Click izquierdo: dashboard. Click derecho (o ctrl-click): menú con opciones.
+    @objc func clicked() {
+        let e = NSApp.currentEvent
+        if e?.type == .rightMouseUp || e?.modifierFlags.contains(.control) == true { showOptions() }
+        else if popover.isShown { popover.performClose(nil) }
+        else if let b = item.button {
+            loadDashboard()
+            popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func loadDashboard() {
+        web.loadHTMLString(template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(snapshot)), baseURL: nil)
     }
 
     @objc func refresh() {
@@ -130,66 +187,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self.snapshot = msgs
                 self.item.button?.title = " " + fmt(periods(msgs).today)
-                self.rebuildMenu()
+                if self.popover.isShown { self.loadDashboard() }
             }
         }
     }
 
-    func line(_ title: String, bold: Bool = false) -> NSMenuItem {
-        let m = NSMenuItem(title: title, action: #selector(noop), keyEquivalent: "")
-        m.target = self
-        if bold { m.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]) }
-        return m
-    }
-    @objc func noop() {}
-
-    func rebuildMenu() {
+    func showOptions() {
         let menu = NSMenu()
         let p = periods(snapshot)
-        menu.addItem(line("Claude Code · tokens", bold: true))
-        menu.addItem(line("Hoy: \(fmt(p.today))"))
-        menu.addItem(line("Últimos 7 días: \(fmt(p.week))"))
-        menu.addItem(line("Este mes: \(fmt(p.month))"))
-        menu.addItem(line("Total: \(fmt(p.total))"))
-        menu.addItem(.separator())
-        menu.addItem(line("Por proyecto (este mes)", bold: true))
-        let byProject = Dictionary(grouping: snapshot, by: { $0.project })
-        let rows = byProject.map { (name: $0.key, p: periods($0.value)) }.sorted { $0.p.month > $1.p.month }
-        for r in rows where r.p.total > 0 {
-            let mi = NSMenuItem(title: "\(r.name) — \(fmt(r.p.month))", action: nil, keyEquivalent: "")
-            let sub = NSMenu()
-            sub.addItem(line("Hoy: \(fmt(r.p.today))"))
-            sub.addItem(line("Últimos 7 días: \(fmt(r.p.week))"))
-            sub.addItem(line("Este mes: \(fmt(r.p.month))"))
-            sub.addItem(line("Total: \(fmt(r.p.total))"))
-            mi.submenu = sub
-            menu.addItem(mi)
-        }
-        menu.addItem(.separator())
-        let open = NSMenuItem(title: "Abrir dashboard", action: #selector(openDashboard), keyEquivalent: "d"); open.target = self
+        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) · mes \(fmt(p.month))", action: nil, keyEquivalent: ""); head.isEnabled = false
         let ref = NSMenuItem(title: "Actualizar ahora", action: #selector(refresh), keyEquivalent: "r"); ref.target = self
+        let browser = NSMenuItem(title: "Abrir en el navegador", action: #selector(openInBrowser), keyEquivalent: "d"); browser.target = self
         let login = NSMenuItem(title: "Abrir al iniciar sesión", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         let quit = NSMenuItem(title: "Salir", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        [open, ref, login, .separator(), quit].forEach { menu.addItem($0) }
+        [head, .separator(), ref, browser, login, .separator(), quit].forEach { menu.addItem($0) }
         item.menu = menu
+        item.button?.performClick(nil)   // muestra el menú una vez
+        item.menu = nil                  // y vuelve al modo click -> popover
     }
 
     /// El .app vive en <repo>/ClaudeUsage.app; el repo tiene generate.py e index.html.
     var repoDir: String {
-        let env = ProcessInfo.processInfo.environment["CLAUDE_USAGE_DIR"]
-        return env ?? (Bundle.main.bundlePath as NSString).deletingLastPathComponent
+        ProcessInfo.processInfo.environment["CLAUDE_USAGE_DIR"] ?? (Bundle.main.bundlePath as NSString).deletingLastPathComponent
     }
 
-    @objc func openDashboard() {
-        let dir = repoDir
-        queue.async {
-            let pr = Process()
-            pr.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            pr.arguments = [dir + "/generate.py"]
-            try? pr.run(); pr.waitUntilExit()
-            DispatchQueue.main.async { NSWorkspace.shared.open(URL(fileURLWithPath: dir + "/index.html")) }
-        }
+    @objc func openInBrowser() {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory() + "claude-usage.html")
+        try? template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(snapshot)).write(to: url, atomically: true, encoding: .utf8)
+        NSWorkspace.shared.open(url)
     }
 
     @objc func toggleLogin() {
@@ -197,7 +223,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
             else { try SMAppService.mainApp.register() }
         } catch { NSLog("login item: \(error)") }
-        rebuildMenu()
     }
 }
 

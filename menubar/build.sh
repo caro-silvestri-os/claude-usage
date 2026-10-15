@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 APP=../ClaudeUsage.app
-rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
+rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp ../template.html "$APP/Contents/Resources/template.html"
 swiftc -O -o "$APP/Contents/MacOS/ClaudeUsage" main.swift
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
