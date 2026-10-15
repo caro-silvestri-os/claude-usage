@@ -39,8 +39,8 @@ open ClaudeUsage.app
 ```
 
 - **Barra de menú:** muestra los tokens de hoy, por ejemplo `1.9M`.
-- **Click izquierdo:** abre el dashboard completo en una ventanita.
-- **Click derecho (o ctrl-click):** menú con *Actualizar ahora*, *Abrir en el navegador*, *Abrir al iniciar sesión* y *Salir*.
+- **Click izquierdo:** ventanita con lo de **hoy**: costo estimado, tokens, output, últimos 7 días, mes y el detalle por proyecto. El botón **Ver histórico en la web** abre el dashboard completo (calendario, tabla por día, períodos) en el navegador.
+- **Click derecho (o ctrl-click):** menú con *Actualizar ahora*, *Ver histórico en la web*, *Abrir al iniciar sesión* y *Salir*.
 - Se refresca sola cada 60 segundos y no aparece en el Dock.
 
 La app no está firmada por un desarrollador de Apple. Si macOS la bloquea la primera vez, abrila con click derecho → *Abrir*, o desde *Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente*.

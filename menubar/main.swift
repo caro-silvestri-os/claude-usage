@@ -173,14 +173,56 @@ func periods(_ msgs: [Msg]) -> Period {
     return Period(today: p.0, week: p.1, month: p.2, total: p.3, monthCost: c.0, todayCost: c.1)
 }
 
+// MARK: - Vista compacta de hoy
+
+func usdText(_ n: Double) -> String { n >= 100 ? "~$\(Int(n.rounded()))" : String(format: "~$%.2f", n) }
+func esc(_ t: String) -> String { t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;") }
+
+/// HTML chico del popover: solo el día de hoy. El histórico completo se abre en la web (link usage://history).
+func todayHTML(_ msgs: [Msg]) -> String {
+    let cal = Calendar.current, t0 = cal.startOfDay(for: Date())
+    let today = msgs.filter { $0.ts >= t0 }
+    let p = periods(msgs)
+    let df = DateFormatter(); df.locale = Locale(identifier: "es"); df.dateFormat = "EEEE d 'de' MMMM"
+    let cost = today.reduce(0) { $0 + $1.cost }
+    let out = today.reduce(0) { $0 + $1.output }
+    let byProject = Dictionary(grouping: today, by: { $0.project })
+        .map { (name: $0.key, tokens: $0.value.reduce(0) { $0 + $1.tokens }, cost: $0.value.reduce(0) { $0 + $1.cost }) }
+        .sorted { $0.cost > $1.cost }
+    let mx = max(byProject.first?.cost ?? 0, 0.0001)
+    let rows = byProject.isEmpty ? "<div class=mu style='padding:12px 0'>Todavía no usaste Claude Code hoy.</div>" :
+        byProject.map { r in
+            "<div class=r><div class=n>\(esc(r.name))</div><div class=v>\(usdText(r.cost))<span class=mu> · \(fmt(r.tokens))</span></div><div class=b><i style='width:\(r.cost / mx * 100)%'></i></div></div>"
+        }.joined()
+    return """
+    <!doctype html><meta charset=utf-8><style>
+    :root{--card:#161b22;--bd:#30363d;--tx:#e6edf3;--mu:#8b949e;--acc:#1A66FC;--acc2:#FF6332}
+    *{box-sizing:border-box}body{margin:0;padding:18px;background:#0d1117;color:var(--tx);font:13px -apple-system,system-ui,sans-serif}
+    .mu{color:var(--mu)}h1{font-size:12px;font-weight:500;color:var(--mu);margin:0 0 2px;text-transform:capitalize}
+    .big{font-size:34px;font-weight:700;color:var(--acc2);letter-spacing:-.5px}.sub{color:var(--mu);margin-top:2px}
+    .tiles{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:14px 0}
+    .tiles div{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px}.tiles b{display:block;font-size:15px;margin-top:2px}
+    h2{font-size:12px;font-weight:600;margin:16px 0 4px}.r{padding:6px 0;border-bottom:1px solid var(--bd);position:relative}
+    .r .n{font-weight:500}.r .v{position:absolute;right:0;top:6px}.b{height:4px;background:#0d1117;border-radius:2px;margin-top:5px}.b i{display:block;height:4px;background:var(--acc);border-radius:2px;min-width:2px}
+    a{display:block;margin-top:16px;text-align:center;background:var(--acc);color:#fff;text-decoration:none;padding:9px;border-radius:8px;font-weight:600}
+    </style>
+    <h1>\(df.string(from: Date()))</h1>
+    <div class=big>\(usdText(cost))</div><div class=sub>costo estimado de hoy</div>
+    <div class=tiles><div><span class=mu>Tokens</span><b>\(fmt(p.today))</b></div><div><span class=mu>Output</span><b>\(fmt(out))</b></div><div><span class=mu>7 días</span><b>\(fmt(p.week))</b></div></div>
+    <div class=mu>Este mes: \(fmt(p.month)) · \(usdText(p.monthCost)) est.</div>
+    <h2>Hoy por proyecto</h2>\(rows)
+    <a href="usage://history">Ver histórico en la web →</a>
+    """
+}
+
 // MARK: - App
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let store = UsageStore()
     let queue = DispatchQueue(label: "usage", qos: .utility)
     let popover = NSPopover()
-    let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 860, height: 700))
+    let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: 520))
     var timer: Timer?
     var snapshot: [Msg] = []
     var history: [Rec] = []
@@ -203,9 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             b.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         web.setValue(false, forKey: "drawsBackground")
+        web.navigationDelegate = self
         let vc = NSViewController(); vc.view = web
         popover.contentViewController = vc
-        popover.contentSize = NSSize(width: 860, height: 700)
+        popover.contentSize = NSSize(width: 380, height: 520)
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
 
@@ -227,7 +270,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func loadDashboard() {
-        web.loadHTMLString(template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(history)), baseURL: nil)
+        web.loadHTMLString(todayHTML(snapshot), baseURL: nil)
+    }
+
+    /// El botón "Ver histórico en la web" del popover abre el dashboard completo en el navegador.
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if action.request.url?.scheme == "usage" {
+            decisionHandler(.cancel)
+            popover.performClose(nil)
+            openInBrowser()
+        } else {
+            decisionHandler(.allow)
+        }
     }
 
     @objc func refresh() {
@@ -250,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = periods(snapshot)
         let head = NSMenuItem(title: "Hoy \(fmt(p.today)) (~$\(Int(p.todayCost.rounded())) est.) · mes ~$\(Int(p.monthCost.rounded())) est.", action: nil, keyEquivalent: ""); head.isEnabled = false
         let ref = NSMenuItem(title: "Actualizar ahora", action: #selector(refresh), keyEquivalent: "r"); ref.target = self
-        let browser = NSMenuItem(title: "Abrir en el navegador", action: #selector(openInBrowser), keyEquivalent: "d"); browser.target = self
+        let browser = NSMenuItem(title: "Ver histórico en la web", action: #selector(openInBrowser), keyEquivalent: "d"); browser.target = self
         let login = NSMenuItem(title: "Abrir al iniciar sesión", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         let quit = NSMenuItem(title: "Salir", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
