@@ -5,9 +5,14 @@ import WebKit
 // MARK: - Datos
 
 struct Msg {
-    let ts: Date, project: String, model: String, session: String
-    let input: Int, cached: Int, output: Int
-    var tokens: Int { input + cached + output }
+    let ts: Date, project: String, model: String
+    let input: Int, cacheWrite: Int, cached: Int, output: Int
+    var tokens: Int { input + cacheWrite + cached + output }
+    /// Costo estimado a precio de lista de la API (USD por 1M tokens). Cache write = 1.25x input, cache read = 0.1x input.
+    var cost: Double {
+        let (i, o): (Double, Double) = ["claude-opus-5-5": (4, 20), "claude-opus-5": (5, 25), "claude-haiku-5-5": (0.1, 0.5)][model] ?? (2, 10)
+        return (Double(input) * i + Double(cacheWrite) * i * 1.25 + Double(cached) * i * 0.1 + Double(output) * o) / 1e6
+    }
 }
 
 /// Lee ~/.claude/projects, deduplica por message.id y cachea por archivo (mtime + tamaño).
@@ -48,7 +53,6 @@ final class UsageStore {
 
     private func parse(_ path: String, folder: String) -> [String: Msg] {
         let name = project(from: folder)
-        let session = (path as NSString).lastPathComponent
         if !prefix.isEmpty && !name.hasPrefix(prefix) { return [:] }
         guard let data = FileManager.default.contents(atPath: path) else { return [:] }
         var out: [String: Msg] = [:]
@@ -72,8 +76,8 @@ final class UsageStore {
                       let ts = iso.date(from: tss) ?? isoPlain.date(from: tss) else { continue }
                 func i(_ k: String) -> Int { (u[k] as? NSNumber)?.intValue ?? 0 }
                 let id = (m["id"] as? String) ?? (o["uuid"] as? String) ?? UUID().uuidString
-                out[id] = Msg(ts: ts, project: name, model: model, session: session,
-                              input: i("input_tokens") + i("cache_creation_input_tokens"),
+                out[id] = Msg(ts: ts, project: name, model: model,
+                              input: i("input_tokens"), cacheWrite: i("cache_creation_input_tokens"),
                               cached: i("cache_read_input_tokens"), output: i("output_tokens"))
             }
         }
@@ -92,36 +96,36 @@ func fmt(_ n: Int) -> String {
 /// Mismo formato que genera generate.py: un registro por (día, proyecto, modelo).
 func dashboardJSON(_ msgs: [Msg]) -> String {
     let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-    var agg: [String: (day: String, project: String, model: String, input: Int, cached: Int, output: Int, sessions: Set<String>)] = [:]
+    var agg: [String: (day: String, project: String, model: String, input: Int, cacheWrite: Int, cached: Int, output: Int)] = [:]
     for m in msgs {
         let day = df.string(from: m.ts), key = "\(day)|\(m.project)|\(m.model)"
-        var a = agg[key] ?? (day, m.project, m.model, 0, 0, 0, [])
-        a.input += m.input; a.cached += m.cached; a.output += m.output; a.sessions.insert(m.session)
+        var a = agg[key] ?? (day, m.project, m.model, 0, 0, 0, 0)
+        a.input += m.input; a.cacheWrite += m.cacheWrite; a.cached += m.cached; a.output += m.output
         agg[key] = a
     }
     let rows: [[String: Any]] = agg.values.map {
-        ["day": $0.day, "project": $0.project, "model": $0.model, "input": $0.input, "cached": $0.cached,
-         "output": $0.output, "total": $0.input + $0.cached + $0.output, "sessions": $0.sessions.sorted()]
+        ["day": $0.day, "project": $0.project, "model": $0.model, "input": $0.input, "cache_write": $0.cacheWrite,
+         "cached": $0.cached, "output": $0.output, "total": $0.input + $0.cacheWrite + $0.cached + $0.output]
     }
     let d = (try? JSONSerialization.data(withJSONObject: rows)) ?? Data("[]".utf8)
     return String(decoding: d, as: UTF8.self)
 }
 
-struct Period { let today: Int, week: Int, month: Int, total: Int }
+struct Period { let today: Int, week: Int, month: Int, total: Int, monthCost: Double, todayCost: Double }
 
 func periods(_ msgs: [Msg]) -> Period {
     let cal = Calendar.current, now = Date()
     let t0 = cal.startOfDay(for: now)
     let w0 = cal.date(byAdding: .day, value: -6, to: t0)!
     let m0 = cal.date(from: cal.dateComponents([.year, .month], from: now))!
-    var p = (0, 0, 0, 0)
+    var p = (0, 0, 0, 0), c = (0.0, 0.0)
     for m in msgs {
         p.3 += m.tokens
-        if m.ts >= m0 { p.2 += m.tokens }
+        if m.ts >= m0 { p.2 += m.tokens; c.0 += m.cost }
         if m.ts >= w0 { p.1 += m.tokens }
-        if m.ts >= t0 { p.0 += m.tokens }
+        if m.ts >= t0 { p.0 += m.tokens; c.1 += m.cost }
     }
-    return Period(today: p.0, week: p.1, month: p.2, total: p.3)
+    return Period(today: p.0, week: p.1, month: p.2, total: p.3, monthCost: c.0, todayCost: c.1)
 }
 
 // MARK: - App
@@ -195,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showOptions() {
         let menu = NSMenu()
         let p = periods(snapshot)
-        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) · mes \(fmt(p.month))", action: nil, keyEquivalent: ""); head.isEnabled = false
+        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) (~$\(Int(p.todayCost.rounded())) est.) · mes ~$\(Int(p.monthCost.rounded())) est.", action: nil, keyEquivalent: ""); head.isEnabled = false
         let ref = NSMenuItem(title: "Actualizar ahora", action: #selector(refresh), keyEquivalent: "r"); ref.target = self
         let browser = NSMenuItem(title: "Abrir en el navegador", action: #selector(openInBrowser), keyEquivalent: "d"); browser.target = self
         let login = NSMenuItem(title: "Abrir al iniciar sesión", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self

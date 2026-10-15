@@ -23,7 +23,7 @@ for f in glob.glob(f"{root}/**/*.jsonl", recursive=True):
             if PREFIX and not project.startswith(PREFIX): continue
             day =datetime.fromisoformat(o["timestamp"].replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
             msgs[m.get("id") or o["uuid"]] = dict(session=session, day=day, project=project, model=m["model"],
-                input=u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0),
+                input=u.get("input_tokens", 0), cache_write=u.get("cache_creation_input_tokens", 0),
                 cached=u.get("cache_read_input_tokens", 0), output=u.get("output_tokens", 0))
     except Exception as e:
         print("skip", f, e, file=sys.stderr)
@@ -31,15 +31,14 @@ for f in glob.glob(f"{root}/**/*.jsonl", recursive=True):
 agg = {}
 for r in msgs.values():
     k = (r["day"], r["project"], r["model"])
-    a = agg.setdefault(k, dict(day=k[0], project=k[1], model=k[2], input=0, cached=0, output=0, sess=set()))
-    a["input"] += r["input"]; a["cached"] += r["cached"]; a["output"] += r["output"]; a["sess"].add(r["session"])
+    a = agg.setdefault(k, dict(day=k[0], project=k[1], model=k[2], input=0, cache_write=0, cached=0, output=0))
+    a["input"] += r["input"]; a["cache_write"] += r["cache_write"]; a["cached"] += r["cached"]; a["output"] += r["output"]
 data = []
 for a in agg.values():
-    a["sessions"] = sorted(a.pop("sess"))
-    a["total"] = a["input"] + a["cached"] + a["output"]
+    a["total"] = a["input"] + a["cache_write"] + a["cached"] + a["output"]
     data.append(a)
 
 here = os.path.dirname(os.path.abspath(__file__))
 html = open(f"{here}/template.html").read().replace("__DATA__", json.dumps(data))
 open(f"{here}/index.html", "w").write(html)
-print(f"{len(msgs)} mensajes, {len({s for a in data for s in a['sessions']})} sesiones -> {here}/index.html")
+print(f"{len(msgs)} mensajes -> {here}/index.html")
