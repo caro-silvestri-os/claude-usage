@@ -25,9 +25,10 @@ tr.d{cursor:pointer}tr.d:hover{background:#1f2630}a.x{color:var(--mu);cursor:poi
 <div id="tip"></div>
 <script>
 const D=__DATA__;let sel=null,selDay=null;const $=i=>document.getElementById(i);
-// Precios de lista de la API (USD por 1M tokens): [input, output]. Cache write = 1.25x input, cache read = 0.1x input.
-const PRICE={"claude-sonnet-5":[2,10],"claude-sonnet-5-5":[2,10],"claude-opus-5-5":[4,20],"claude-opus-5":[5,25],"claude-haiku-5-5":[.1,.5]};
-D.forEach(x=>{const[i,o]=PRICE[x.model]||[2,10];x.cost=(x.input*i+x.cache_write*i*1.25+x.cached*i*.1+x.output*o)/1e6});
+// Precios de lista de la API (USD por 1M tokens): [input, output, multiplicador de cache read].
+// Cache write (5 min) = 1.25x input. Fuente: https://platform.claude.com/docs/en/about-claude/pricing
+const PRICE={"claude-sonnet-5":[2,10,.1],"claude-sonnet-5-5":[2,10,.05],"claude-opus-5-5":[4,20,.05],"claude-opus-5":[5,25,.1],"claude-haiku-5-5":[.1,.5,.1]};
+D.forEach(x=>{const[i,o,r]=PRICE[x.model]||[2,10,.1];x.cost=(x.input*i+x.cache_write*i*1.25+x.cached*i*r+x.output*o)/1e6});
 const usd=n=>"~$"+(n>=100?Math.round(n):n.toFixed(2));
 const fmt=n=>n>=1e9?(n/1e9).toFixed(2)+"B":n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":""+n;
 const sum=(a,k)=>a.reduce((s,x)=>s+x[k],0);

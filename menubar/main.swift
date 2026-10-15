@@ -10,8 +10,10 @@ struct Msg {
     var tokens: Int { input + cacheWrite + cached + output }
     /// Costo estimado a precio de lista de la API (USD por 1M tokens). Cache write = 1.25x input, cache read = 0.1x input.
     var cost: Double {
-        let (i, o): (Double, Double) = ["claude-opus-5-5": (4, 20), "claude-opus-5": (5, 25), "claude-haiku-5-5": (0.1, 0.5)][model] ?? (2, 10)
-        return (Double(input) * i + Double(cacheWrite) * i * 1.25 + Double(cached) * i * 0.1 + Double(output) * o) / 1e6
+        // (input, output, multiplicador de cache read). Fuente: https://platform.claude.com/docs/en/about-claude/pricing
+        let (i, o, r): (Double, Double, Double) = ["claude-sonnet-5-5": (2, 10, 0.05), "claude-opus-5-5": (4, 20, 0.05), "claude-opus-5": (5, 25, 0.1),
+                                                   "claude-haiku-5-5": (0.1, 0.5, 0.1)][model] ?? (2, 10, 0.1)
+        return (Double(input) * i + Double(cacheWrite) * i * 1.25 + Double(cached) * i * r + Double(output) * o) / 1e6
     }
 }
 

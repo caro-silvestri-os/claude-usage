@@ -88,7 +88,7 @@ El costo se calcula con los **precios de lista de la API de Anthropic** (USD por
 |---|---|
 | Input nuevo | precio base del modelo |
 | Escritura de caché | 1,25 × input |
-| Lectura de caché | 0,1 × input |
+| Lectura de caché | 0,1 × input (0,05 × en Sonnet 5.5 y Opus 5.5) |
 | Output | precio de output del modelo |
 
 Es una **referencia, no el cobro real**:
