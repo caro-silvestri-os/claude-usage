@@ -60,13 +60,7 @@ CLAUDE_USAGE_PREFIX=mi-prefijo python3 generate.py   # otro prefijo
 CLAUDE_USAGE_PREFIX= python3 generate.py             # todas las carpetas
 ```
 
-Para la app de barra de menú, abrila con la variable definida:
-
-```bash
-CLAUDE_USAGE_PREFIX= open --env CLAUDE_USAGE_PREFIX ClaudeUsage.app
-```
-
-(si no ves cambios, cerrala antes con *Salir*). Para dejarlo fijo, cambiá el valor por defecto en `generate.py` (`PREFIX = ...`) y en `menubar/main.swift` (busca `CLAUDE_USAGE_PREFIX`), y recompilá con `./menubar/build.sh`.
+La app de barra de menú no lee tus variables de terminal. Para cambiar el filtro ahí, editá el valor por defecto en `menubar/main.swift` (buscá `CLAUDE_USAGE_PREFIX`; ponelo en `""` para contar todas las carpetas) y recompilá con `./menubar/build.sh`. Hacé lo mismo en `generate.py` (`PREFIX = ...`) si también usás el dashboard del navegador.
 
 ## Sobre el costo estimado
 
