@@ -19,3 +19,14 @@ CLAUDE_USAGE_PREFIX= python3 generate.py             # todas las carpetas
 ```
 
 Click en un proyecto de la tabla para filtrar todo el dashboard.
+
+## App de barra de menú (macOS)
+
+App nativa en Swift que muestra en la barra de menú los tokens de hoy; al hacer click ves hoy / 7 días / mes / total y el detalle por proyecto.
+
+```
+./menubar/build.sh        # compila ClaudeUsage.app (requiere Xcode / Command Line Tools)
+open ClaudeUsage.app
+```
+
+Se refresca sola cada 60 s. "Abrir dashboard" regenera y abre `index.html`. Usa el mismo filtro `CLAUDE_USAGE_PREFIX`.
