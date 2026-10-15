@@ -200,7 +200,7 @@ func todayHTML(_ msgs: [Msg]) -> String {
     <!doctype html><meta charset=utf-8><style>
     :root{--card:#161b22;--bd:#30363d;--tx:#e6edf3;--mu:#8b949e;--acc:#1A66FC;--acc2:#FF6332}
     *{box-sizing:border-box}body{margin:0;padding:18px;background:#0d1117;color:var(--tx);font:13px -apple-system,system-ui,sans-serif}
-    .mu{color:var(--mu)}h1{font-size:12px;font-weight:500;color:var(--mu);margin:0 0 2px;text-transform:capitalize}
+    .mu{color:var(--mu)}h1{font-size:12px;font-weight:500;color:var(--mu);margin:0 0 2px}h1::first-letter{text-transform:uppercase}
     .big{font-size:34px;font-weight:700;color:var(--acc2);letter-spacing:-.5px}.sub{color:var(--mu);margin-top:2px}
     .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
     .tiles div{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px}.tiles b{display:block;font-size:15px;margin-top:2px}
