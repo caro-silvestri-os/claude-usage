@@ -10,51 +10,68 @@ table{width:100%;border-collapse:collapse}td,th{padding:7px 8px;text-align:right
 tr.p{cursor:pointer}tr.p:hover,tr.sel{background:#1f2630}.bar{height:6px;background:var(--acc);border-radius:3px;min-width:2px}
 select{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:4px 8px}
 svg text{fill:var(--mu);font-size:10px}#tip{position:fixed;background:#000;border:1px solid var(--bd);padding:4px 8px;border-radius:6px;pointer-events:none;display:none;font-size:12px}
-.row{display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.scroll{max-height:340px;overflow:auto}.scroll th{position:sticky;top:0;background:var(--card)}
+tr.d{cursor:pointer}tr.d:hover{background:#1f2630}a.x{color:var(--mu);cursor:pointer;text-decoration:none;margin-left:8px}
 </style>
-<h1>Claude Code usage</h1><div class="mu" id="sub"></div><div class="mu" style="font-size:12px">Costo estimado a precio de lista de la API; puede diferir del cobro real.</div>
+<div class="row"><div><h1>Claude Code usage</h1><div class="mu" id="sub"></div><div class="mu" style="font-size:12px">Costo estimado a precio de lista de la API; puede diferir del cobro real.</div></div>
+<span><span class="mu">Período</span> <select id="period"></select><a class="x" id="clr" style="display:none">quitar filtro de proyecto</a></span></div>
 <div class="stats" id="stats"></div>
-<div class="card"><div class="row"><b id="ht"></b><span><select id="metric"><option value="total">Tokens totales</option><option value="output">Output</option><option value="cost">Costo estimado (USD)</option></select>
-<a href="#" id="clr" class="mu" style="margin-left:8px;display:none">quitar filtro</a></span></div><div><svg id="heat" style="width:100%;height:auto;display:block"></svg></div></div>
+<div class="card"><div class="row"><b id="ht"></b><select id="metric"><option value="total">Tokens totales</option><option value="output">Output</option><option value="cost">Costo estimado (USD)</option></select></div><div><svg id="heat" style="width:100%;height:auto;display:block"></svg></div><div class="mu" style="font-size:12px;margin-top:4px">Click en un día para ver el detalle.</div></div>
+<div class="card" id="daycard" style="display:none"><div class="row"><b id="dayt"></b><a class="x" id="dayx">cerrar</a></div><div class="stats" id="daystats"></div><table id="dayproj"></table></div>
+<div class="card"><b>Por día</b> <span class="mu" id="dsub"></span><div class="scroll"><table id="days"></table></div></div>
 <div class="card"><b>Por proyecto</b> <span class="mu">(click para filtrar)</span><table id="proj"></table></div>
 <div class="card"><b>Por modelo</b><table id="mod"></table></div>
 <div id="tip"></div>
 <script>
-const D=__DATA__;let sel=null;const $=i=>document.getElementById(i);
-const fmt=n=>n>=1e9?(n/1e9).toFixed(2)+"B":n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":""+n;
+const D=__DATA__;let sel=null,selDay=null;const $=i=>document.getElementById(i);
 // Precios de lista de la API (USD por 1M tokens): [input, output]. Cache write = 1.25x input, cache read = 0.1x input.
 const PRICE={"claude-sonnet-5":[2,10],"claude-sonnet-5-5":[2,10],"claude-opus-5-5":[4,20],"claude-opus-5":[5,25],"claude-haiku-5-5":[.1,.5]};
 D.forEach(x=>{const[i,o]=PRICE[x.model]||[2,10];x.cost=(x.input*i+x.cache_write*i*1.25+x.cached*i*.1+x.output*o)/1e6});
 const usd=n=>"~$"+(n>=100?Math.round(n):n.toFixed(2));
+const fmt=n=>n>=1e9?(n/1e9).toFixed(2)+"B":n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":""+n;
 const sum=(a,k)=>a.reduce((s,x)=>s+x[k],0);
-function group(a,k){const m={};a.forEach(x=>(m[x[k]]??=[]).push(x));return Object.entries(m).map(([n,v])=>({n,v,total:sum(v,"total"),input:sum(v,"input")+sum(v,"cache_write"),cached:sum(v,"cached"),output:sum(v,"output"),cost:sum(v,"cost")})).sort((a,b)=>b.total-a.total)}
+function group(a,k,cmp){const m={};a.forEach(x=>(m[x[k]]??=[]).push(x));
+ return Object.entries(m).map(([n,v])=>({n,v,total:sum(v,"total"),input:sum(v,"input")+sum(v,"cache_write"),cached:sum(v,"cached"),output:sum(v,"output"),cost:sum(v,"cost")})).sort(cmp||((a,b)=>b.total-a.total))}
+const years=[...new Set(D.map(x=>x.day.slice(0,4)))].sort().reverse();
+$("period").innerHTML='<option value="all">Todo el histórico</option>'+years.map(y=>`<option>${y}</option>`).join("");
+const tiles=A=>[["Costo estimado",usd(sum(A,"cost"))],["Tokens totales",fmt(sum(A,"total"))],["Input",fmt(sum(A,"input")+sum(A,"cache_write"))],["Cache read",fmt(sum(A,"cached"))],["Output",fmt(sum(A,"output"))]].map(([a,b])=>`<div><span class=mu>${a}</span><b>${b}</b></div>`).join("");
 function render(){
- const A=sel?D.filter(x=>x.project===sel):D;
- $("sub").textContent=sel?`Proyecto: ${sel}`:"Todos los proyectos";$("clr").style.display=sel?"":"none";
- $("stats").innerHTML=[["Costo estimado",usd(sum(A,"cost"))],["Tokens totales",fmt(sum(A,"total"))],["Input",fmt(sum(A,"input")+sum(A,"cache_write"))],["Cache read",fmt(sum(A,"cached"))],["Output",fmt(sum(A,"output"))]].map(([a,b])=>`<div><span class=mu>${a}</span><b>${b}</b></div>`).join("");
- // heatmap
- const met=$("metric").value,by={};A.forEach(x=>by[x.day]=(by[x.day]||0)+x[met]);
+ const period=$("period").value,P=period=="all"?D:D.filter(x=>x.day.startsWith(period)),A=sel?P.filter(x=>x.project===sel):P;
+ $("sub").textContent=(sel?`Proyecto: ${sel}`:"Todos los proyectos")+" · "+(period=="all"?(D.length?`histórico desde ${D.map(x=>x.day).sort()[0]}`:"sin datos"):period);
+ $("clr").style.display=sel?"":"none";$("stats").innerHTML=tiles(A);
+ // calendario del año (el del período elegido, o el actual si es "todo el histórico")
+ const yr=period=="all"?new Date().getFullYear():+period,today=new Date().toLocaleDateString("sv");
+ const met=$("metric").value,by={};A.filter(x=>x.day.startsWith(yr)).forEach(x=>by[x.day]=(by[x.day]||0)+x[met]);
  const vals=Object.values(by).sort((a,b)=>a-b),q=p=>vals[Math.floor(p*(vals.length-1))]||0,th=[q(.25),q(.5),q(.75)];
  const col=v=>!v?"var(--c0)":v<=th[0]?"var(--c1)":v<=th[1]?"var(--c2)":v<=th[2]?"var(--c3)":"var(--c4)";
- const yr=new Date().getFullYear(),today=new Date().toLocaleDateString("sv");
  const start=new Date(yr,0,1,12);start.setDate(start.getDate()-start.getDay());const end=new Date(yr,11,31,12);
  let g="",mo=-1,w=0,d=new Date(start);
  for(;d<=end;d.setDate(d.getDate()+1)){const dw=d.getDay();if(dw==0&&d>start)w++;
   const k=d.toLocaleDateString("sv"),v=by[k]||0;
   if(d.getFullYear()<yr)continue;
   if(d.getMonth()!=mo){mo=d.getMonth();g+=`<text x="${w*14+24}" y="10">${d.toLocaleString("es",{month:"short"})}</text>`}
-  const fut=k>today;
-  g+=`<rect x="${w*14+24}" y="${dw*14+16}" width="11" height="11" rx="2" fill="${fut?"none":col(v)}" stroke="${fut?"#30363d":"none"}" stroke-opacity=".5" data-t="${k}: ${met=="cost"?usd(v)+" (est.)":fmt(v)+" tokens"}"/>`}
+  const fut=k>today,on=k===selDay;
+  g+=`<rect x="${w*14+24}" y="${dw*14+16}" width="11" height="11" rx="2" fill="${fut?"none":col(v)}" stroke="${on?"#fff":fut?"#30363d":"none"}" stroke-opacity="${on?1:.5}" data-day="${fut?"":k}" data-t="${k}: ${met=="cost"?usd(v)+" (est.)":fmt(v)+" tokens"}"/>`}
  ["D","L","M","M","J","V","S"].forEach((l,i)=>i%2&&(g+=`<text x="2" y="${i*14+26}">${l}</text>`));
- $("heat").setAttribute("viewBox",`0 0 ${(w+1)*14+30} 116`);$("heat").innerHTML=g;
- $("ht").textContent="Actividad "+yr;
- // tablas
- const P=group(D,"project"),mx=P[0]?.total||1;
- $("proj").innerHTML="<tr><th>Proyecto<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.<th style='width:18%'></tr>"+P.map(p=>`<tr class="p ${p.n===sel?"sel":""}" data-p="${p.n}"><td>${p.n}<td>${fmt(p.input)}<td>${fmt(p.cached)}<td>${fmt(p.output)}<td>${fmt(p.total)}<td>${usd(p.cost)}<td><div class=bar style="width:${p.total/mx*100}%"></div></tr>`).join("");
+ $("heat").setAttribute("viewBox",`0 0 ${(w+1)*14+30} 116`);$("heat").innerHTML=g;$("ht").textContent="Actividad "+yr;
+ // detalle del día
+ const DD=selDay?A.filter(x=>x.day===selDay):[];$("daycard").style.display=selDay?"":"none";
+ if(selDay){$("dayt").textContent="Detalle del "+selDay;$("daystats").innerHTML=DD.length?tiles(DD):"";
+  const pm=group(DD,"project");$("dayproj").innerHTML=DD.length?"<tr><th>Proyecto<th>Modelo<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.</tr>"+group(DD.map(x=>({...x,pm:x.project+"|"+x.model})),"pm").map(r=>{const[p,m]=r.n.split("|");return `<tr><td>${p}<td>${m}<td>${fmt(r.input)}<td>${fmt(r.cached)}<td>${fmt(r.output)}<td>${fmt(r.total)}<td>${usd(r.cost)}</tr>`}).join(""):"<tr><td class=mu>Sin uso ese día</tr>"}
+ // por día (más reciente primero)
+ const DY=group(A,"day",(a,b)=>b.n.localeCompare(a.n)),mxd=Math.max(...DY.map(r=>r.cost),1e-9);
+ $("dsub").textContent=`(${DY.length} días con uso)`;
+ $("days").innerHTML="<tr><th>Día<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.<th style='width:18%'></tr>"+DY.map(r=>`<tr class="d" data-day="${r.n}"><td>${r.n}<td>${fmt(r.input)}<td>${fmt(r.cached)}<td>${fmt(r.output)}<td>${fmt(r.total)}<td>${usd(r.cost)}<td><div class=bar style="width:${r.cost/mxd*100}%"></div></tr>`).join("");
+ // por proyecto / modelo
+ const PR=group(P,"project"),mx=PR[0]?.total||1;
+ $("proj").innerHTML="<tr><th>Proyecto<th>Input<th>Cache read<th>Output<th>Total<th>Costo est.<th style='width:18%'></tr>"+PR.map(p=>`<tr class="p ${p.n===sel?"sel":""}" data-p="${p.n}"><td>${p.n}<td>${fmt(p.input)}<td>${fmt(p.cached)}<td>${fmt(p.output)}<td>${fmt(p.total)}<td>${usd(p.cost)}<td><div class=bar style="width:${p.total/mx*100}%"></div></tr>`).join("");
  $("mod").innerHTML="<tr><th>Modelo<th>Total<th>Costo est.</tr>"+group(A,"model").map(p=>`<tr><td>${p.n}<td>${fmt(p.total)}<td>${usd(p.cost)}</tr>`).join("");
  document.querySelectorAll("tr.p").forEach(r=>r.onclick=()=>{sel=sel===r.dataset.p?null:r.dataset.p;render()});
+ document.querySelectorAll("tr.d").forEach(r=>r.onclick=()=>{selDay=r.dataset.day;render();$("daycard").scrollIntoView({block:"nearest"})});
+ document.querySelectorAll("rect[data-day]").forEach(r=>r.onclick=()=>{if(r.dataset.day){selDay=selDay===r.dataset.day?null:r.dataset.day;render()}});
 }
-$("metric").onchange=render;$("clr").onclick=e=>{e.preventDefault();sel=null;render()};
+$("metric").onchange=render;$("period").onchange=()=>{selDay=null;render()};$("clr").onclick=()=>{sel=null;render()};$("dayx").onclick=()=>{selDay=null;render()};
 const tip=$("tip");document.addEventListener("mousemove",e=>{const t=e.target.dataset?.t;tip.style.display=t?"block":"none";if(t){tip.textContent=t;tip.style.left=e.clientX+12+"px";tip.style.top=e.clientY+12+"px"}});
 render();
 </script></html>

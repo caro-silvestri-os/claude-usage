@@ -18,7 +18,6 @@ struct Msg {
 /// Lee ~/.claude/projects, deduplica por message.id y cachea por archivo (mtime + tamaño).
 final class UsageStore {
     private let root = NSString(string: "~/.claude/projects").expandingTildeInPath
-    private let prefix = ProcessInfo.processInfo.environment["CLAUDE_USAGE_PREFIX"] ?? "pic"
     private var cache: [String: (mtime: Date, size: Int, msgs: [String: Msg])] = [:]
     private let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
@@ -45,7 +44,7 @@ final class UsageStore {
     }
 
     private func project(from folder: String) -> String {
-        let home = NSHomeDirectory().replacingOccurrences(of: "/", with: "-")
+        let home = NSHomeDirectory().replacingOccurrences(of: "[^A-Za-z0-9]", with: "-", options: .regularExpression)
         let p = folder.hasPrefix(home) ? String(folder.dropFirst(home.count)) : folder
         let t = p.drop(while: { $0 == "-" })
         return t.isEmpty ? "~ (home)" : String(t)
@@ -53,7 +52,6 @@ final class UsageStore {
 
     private func parse(_ path: String, folder: String) -> [String: Msg] {
         let name = project(from: folder)
-        if !prefix.isEmpty && !name.hasPrefix(prefix) { return [:] }
         guard let data = FileManager.default.contents(atPath: path) else { return [:] }
         var out: [String: Msg] = [:]
         let needle = Data("\"usage\"".utf8)
@@ -93,21 +91,68 @@ func fmt(_ n: Int) -> String {
     return "\(n)"
 }
 
-/// Mismo formato que genera generate.py: un registro por (día, proyecto, modelo).
-func dashboardJSON(_ msgs: [Msg]) -> String {
+let prefixFilter = ProcessInfo.processInfo.environment["CLAUDE_USAGE_PREFIX"] ?? "pic"
+func shown(_ project: String) -> Bool { prefixFilter.isEmpty || project.hasPrefix(prefixFilter) }
+
+/// Totales de un (día, proyecto, modelo): el mismo formato que genera generate.py.
+struct Rec {
+    let day: String, project: String, model: String
+    var input = 0, cacheWrite = 0, cached = 0, output = 0
+    var total: Int { input + cacheWrite + cached + output }
+    var key: String { "\(day)|\(project)|\(model)" }
+    var json: [String: Any] {
+        ["day": day, "project": project, "model": model, "input": input, "cache_write": cacheWrite,
+         "cached": cached, "output": output, "total": total]
+    }
+}
+
+func aggregate(_ msgs: [Msg]) -> [String: Rec] {
     let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-    var agg: [String: (day: String, project: String, model: String, input: Int, cacheWrite: Int, cached: Int, output: Int)] = [:]
+    var out: [String: Rec] = [:]
     for m in msgs {
-        let day = df.string(from: m.ts), key = "\(day)|\(m.project)|\(m.model)"
-        var a = agg[key] ?? (day, m.project, m.model, 0, 0, 0, 0)
-        a.input += m.input; a.cacheWrite += m.cacheWrite; a.cached += m.cached; a.output += m.output
-        agg[key] = a
+        var r = Rec(day: df.string(from: m.ts), project: m.project, model: m.model)
+        r = out[r.key] ?? r
+        r.input += m.input; r.cacheWrite += m.cacheWrite; r.cached += m.cached; r.output += m.output
+        out[r.key] = r
     }
-    let rows: [[String: Any]] = agg.values.map {
-        ["day": $0.day, "project": $0.project, "model": $0.model, "input": $0.input, "cache_write": $0.cacheWrite,
-         "cached": $0.cached, "output": $0.output, "total": $0.input + $0.cacheWrite + $0.cached + $0.output]
+    return out
+}
+
+/// Claude Code borra los logs viejos (por defecto ~30 días); guardamos los totales diarios aparte para tener histórico.
+/// Se comparte con generate.py (mismo archivo y formato). De cada (día, proyecto, modelo) se conserva el registro más grande.
+enum History {
+    static let url: URL = {
+        if let p = ProcessInfo.processInfo.environment["CLAUDE_USAGE_HISTORY"] { return URL(fileURLWithPath: p) }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude-usage/history.json")
+    }()
+
+    static func load() -> [String: Rec] {
+        guard let d = try? Data(contentsOf: url), let a = (try? JSONSerialization.jsonObject(with: d)) as? [[String: Any]] else { return [:] }
+        var out: [String: Rec] = [:]
+        for o in a {
+            guard let day = o["day"] as? String, let p = o["project"] as? String, let m = o["model"] as? String else { continue }
+            func i(_ k: String) -> Int { (o[k] as? NSNumber)?.intValue ?? 0 }
+            let r = Rec(day: day, project: p, model: m, input: i("input"), cacheWrite: i("cache_write"), cached: i("cached"), output: i("output"))
+            out[r.key] = r
+        }
+        return out
     }
-    let d = (try? JSONSerialization.data(withJSONObject: rows)) ?? Data("[]".utf8)
+
+    static func merge(_ live: [String: Rec]) -> [String: Rec] {
+        var all = load()
+        let before = all.mapValues { $0.total }
+        for (k, r) in live where r.total >= (all[k]?.total ?? -1) { all[k] = r }
+        if all.mapValues({ $0.total }) != before {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let rows = all.keys.sorted().map { all[$0]!.json }
+            if let d = try? JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys]) { try? d.write(to: url, options: .atomic) }
+        }
+        return all
+    }
+}
+
+func dashboardJSON(_ recs: [Rec]) -> String {
+    let d = (try? JSONSerialization.data(withJSONObject: recs.map { $0.json })) ?? Data("[]".utf8)
     return String(decoding: d, as: UTF8.self)
 }
 
@@ -138,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 860, height: 700))
     var timer: Timer?
     var snapshot: [Msg] = []
+    var history: [Rec] = []
     lazy var template: String = {
         let candidates = [Bundle.main.path(forResource: "template", ofType: "html"), repoDir + "/template.html"].compactMap { $0 }
         for p in candidates { if let t = try? String(contentsOfFile: p, encoding: .utf8) { return t } }
@@ -181,15 +227,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func loadDashboard() {
-        web.loadHTMLString(template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(snapshot)), baseURL: nil)
+        web.loadHTMLString(template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(history)), baseURL: nil)
     }
 
     @objc func refresh() {
         queue.async { [weak self] in
             guard let self else { return }
-            let msgs = self.store.load()
+            let all = self.store.load()
+            let hist = History.merge(aggregate(all)).values.filter { shown($0.project) }
+            let msgs = all.filter { shown($0.project) }
             DispatchQueue.main.async {
                 self.snapshot = msgs
+                self.history = Array(hist)
                 self.item.button?.title = " " + fmt(periods(msgs).today)
                 if self.popover.isShown { self.loadDashboard() }
             }
@@ -218,7 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openInBrowser() {
         let url = URL(fileURLWithPath: NSTemporaryDirectory() + "claude-usage.html")
-        try? template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(snapshot)).write(to: url, atomically: true, encoding: .utf8)
+        try? template.replacingOccurrences(of: "__DATA__", with: dashboardJSON(history)).write(to: url, atomically: true, encoding: .utf8)
         NSWorkspace.shared.open(url)
     }
 

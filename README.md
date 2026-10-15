@@ -50,8 +50,22 @@ Para que arranque con la compu, usá *Abrir al iniciar sesión* en el menú de c
 ## Qué muestra
 
 - Costo estimado, tokens totales, input, cache read y output.
-- Calendario del año completo; se puede medir por tokens, output o costo estimado.
+- Calendario del año completo; se puede medir por tokens, output o costo estimado. Click en un día para ver su detalle por proyecto y modelo.
+- Tabla **por día** (el más reciente primero) con tokens y costo estimado.
 - Tabla por proyecto (click en un proyecto para filtrar todo el dashboard) y tabla por modelo.
+- Selector de **período**: todo el histórico o un año en particular.
+
+## Histórico
+
+Claude Code borra por su cuenta los logs viejos (por defecto, los de más de ~30 días), así que los logs solos no alcanzan para ver meses atrás. Por eso, cada vez que corrés `generate.py` o la app de barra de menú, los totales diarios se guardan en:
+
+```
+~/.claude-usage/history.json
+```
+
+Desde ese momento los días quedan guardados aunque Claude Code borre los logs. **Los días que ya se borraron antes de la primera ejecución no se pueden recuperar**, así que conviene instalarlo cuanto antes. Si no lo corrés por un tiempo, igual se conservan los últimos ~30 días de logs que haya.
+
+`generate.py` y la app comparten el mismo archivo. Se puede cambiar con `CLAUDE_USAGE_HISTORY=/otra/ruta.json`. Si lo borrás, el histórico empieza de nuevo con lo que haya en los logs.
 
 Un "proyecto" es la carpeta desde la que abriste Claude Code. Los subagentes cuentan dentro del proyecto de su sesión.
 
@@ -96,4 +110,4 @@ Es una **referencia, no el cobro real**:
 
 ## Privacidad
 
-Los logs de `~/.claude/projects` incluyen tus conversaciones. Este proyecto solo lee las cifras de uso (tokens, modelo, fecha y carpeta), pero **no subas `index.html`** si lo vas a compartir: muestra los nombres de tus proyectos y tu consumo.
+`~/.claude-usage/history.json` guarda nombres de proyecto y consumo por día (sin contenido de conversaciones). Los logs de `~/.claude/projects` sí incluyen tus conversaciones. Este proyecto solo lee las cifras de uso (tokens, modelo, fecha y carpeta), pero **no subas `index.html`** si lo vas a compartir: muestra los nombres de tus proyectos y tu consumo.
