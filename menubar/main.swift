@@ -8,6 +8,11 @@ struct Msg {
     let ts: Date, project: String, model: String
     let input: Int, cacheWrite: Int, cached: Int, output: Int
     var tokens: Int { input + cacheWrite + cached + output }
+    /// Costo estimado a precio de lista de la API (USD por 1M tokens). Cache write = 1.25x input, cache read = 0.1x input.
+    var cost: Double {
+        let (i, o): (Double, Double) = ["claude-opus-5-5": (4, 20), "claude-opus-5": (5, 25), "claude-haiku-5-5": (0.1, 0.5)][model] ?? (2, 10)
+        return (Double(input) * i + Double(cacheWrite) * i * 1.25 + Double(cached) * i * 0.1 + Double(output) * o) / 1e6
+    }
 }
 
 /// Lee ~/.claude/projects, deduplica por message.id y cachea por archivo (mtime + tamaño).
@@ -151,25 +156,26 @@ func dashboardJSON(_ recs: [Rec]) -> String {
     return String(decoding: d, as: UTF8.self)
 }
 
-struct Period { let today: Int, week: Int, month: Int, total: Int }
+struct Period { let today: Int, week: Int, month: Int, total: Int, monthCost: Double, todayCost: Double }
 
 func periods(_ msgs: [Msg]) -> Period {
     let cal = Calendar.current, now = Date()
     let t0 = cal.startOfDay(for: now)
     let w0 = cal.date(byAdding: .day, value: -6, to: t0)!
     let m0 = cal.date(from: cal.dateComponents([.year, .month], from: now))!
-    var p = (0, 0, 0, 0)
+    var p = (0, 0, 0, 0), c = (0.0, 0.0)
     for m in msgs {
         p.3 += m.tokens
-        if m.ts >= m0 { p.2 += m.tokens }
+        if m.ts >= m0 { p.2 += m.tokens; c.0 += m.cost }
         if m.ts >= w0 { p.1 += m.tokens }
-        if m.ts >= t0 { p.0 += m.tokens }
+        if m.ts >= t0 { p.0 += m.tokens; c.1 += m.cost }
     }
-    return Period(today: p.0, week: p.1, month: p.2, total: p.3)
+    return Period(today: p.0, week: p.1, month: p.2, total: p.3, monthCost: c.0, todayCost: c.1)
 }
 
 // MARK: - Vista compacta de hoy
 
+func usdText(_ n: Double) -> String { n >= 100 ? "~$\(Int(n.rounded()))" : String(format: "~$%.2f", n) }
 func esc(_ t: String) -> String { t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;") }
 
 /// HTML chico del popover: solo el día de hoy. El histórico completo se abre en la web (link usage://history).
@@ -177,17 +183,18 @@ func todayHTML(_ msgs: [Msg]) -> String {
     let cal = Calendar.current, t0 = cal.startOfDay(for: Date())
     let today = msgs.filter { $0.ts >= t0 }
     let df = DateFormatter(); df.locale = Locale(identifier: "es"); df.dateFormat = "EEEE d 'de' MMMM"
+    let cost = today.reduce(0) { $0 + $1.cost }
     let out = today.reduce(0) { $0 + $1.output }
     let input = today.reduce(0) { $0 + $1.input + $1.cacheWrite }
     let cacheRead = today.reduce(0) { $0 + $1.cached }
     let tokens = today.reduce(0) { $0 + $1.tokens }
     let byProject = Dictionary(grouping: today, by: { $0.project })
-        .map { (name: $0.key, tokens: $0.value.reduce(0) { $0 + $1.tokens }) }
-        .sorted { $0.tokens > $1.tokens }
-    let mx = Double(max(byProject.first?.tokens ?? 0, 1))
+        .map { (name: $0.key, tokens: $0.value.reduce(0) { $0 + $1.tokens }, cost: $0.value.reduce(0) { $0 + $1.cost }) }
+        .sorted { $0.cost > $1.cost }
+    let mx = max(byProject.first?.cost ?? 0, 0.0001)
     let rows = byProject.isEmpty ? "<div class=mu style='padding:12px 0'>Todavía no usaste Claude Code hoy.</div>" :
         byProject.map { r in
-            "<div class=r><div class=n>\(esc(r.name))</div><div class=v>\(fmt(r.tokens))</div><div class=b><i style='width:\(Double(r.tokens) / mx * 100)%'></i></div></div>"
+            "<div class=r><div class=n>\(esc(r.name))</div><div class=v>\(usdText(r.cost))<span class=mu> · \(fmt(r.tokens))</span></div><div class=b><i style='width:\(r.cost / mx * 100)%'></i></div></div>"
         }.joined()
     return """
     <!doctype html><meta charset=utf-8><style>
@@ -195,15 +202,15 @@ func todayHTML(_ msgs: [Msg]) -> String {
     *{box-sizing:border-box}body{margin:0;padding:18px;background:#0d1117;color:var(--tx);font:13px -apple-system,system-ui,sans-serif}
     .mu{color:var(--mu)}h1{font-size:12px;font-weight:500;color:var(--mu);margin:0 0 2px}h1::first-letter{text-transform:uppercase}
     .big{font-size:34px;font-weight:700;color:var(--acc2);letter-spacing:-.5px}.sub{color:var(--mu);margin-top:2px}
-    .tiles{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:14px 0}
+    .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
     .tiles div{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px}.tiles b{display:block;font-size:15px;margin-top:2px}
     h2{font-size:12px;font-weight:600;margin:16px 0 4px}.r{padding:6px 0;border-bottom:1px solid var(--bd);position:relative}
     .r .n{font-weight:500}.r .v{position:absolute;right:0;top:6px}.b{height:4px;background:#0d1117;border-radius:2px;margin-top:5px}.b i{display:block;height:4px;background:var(--acc);border-radius:2px;min-width:2px}
     a{display:block;margin-top:16px;text-align:center;background:var(--acc);color:#fff;text-decoration:none;padding:9px;border-radius:8px;font-weight:600}
     </style>
     <h1>\(df.string(from: Date()))</h1>
-    <div class=big>\(fmt(tokens))</div><div class=sub>tokens de hoy</div>
-    <div class=tiles><div><span class=mu>Output</span><b>\(fmt(out))</b></div><div><span class=mu>Input</span><b>\(fmt(input))</b></div><div><span class=mu>Cache read</span><b>\(fmt(cacheRead))</b></div></div>
+    <div class=big>\(usdText(cost))</div><div class=sub>costo estimado de hoy</div>
+    <div class=tiles><div><span class=mu>Tokens totales</span><b>\(fmt(tokens))</b></div><div><span class=mu>Output</span><b>\(fmt(out))</b></div><div><span class=mu>Input</span><b>\(fmt(input))</b></div><div><span class=mu>Cache read</span><b>\(fmt(cacheRead))</b></div></div>
     <h2>Hoy por proyecto</h2>\(rows)
     <a href="usage://history">Ver histórico en la web →</a>
     """
@@ -296,7 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func showOptions() {
         let menu = NSMenu()
         let p = periods(snapshot)
-        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) tokens", action: nil, keyEquivalent: ""); head.isEnabled = false
+        let head = NSMenuItem(title: "Hoy \(fmt(p.today)) (~$\(Int(p.todayCost.rounded())) est.)", action: nil, keyEquivalent: ""); head.isEnabled = false
         let ref = NSMenuItem(title: "Actualizar ahora", action: #selector(refresh), keyEquivalent: "r"); ref.target = self
         let browser = NSMenuItem(title: "Ver histórico en la web", action: #selector(openInBrowser), keyEquivalent: "d"); browser.target = self
         let login = NSMenuItem(title: "Abrir al iniciar sesión", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self
